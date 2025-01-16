@@ -1,0 +1,11 @@
+*~
+*.pyc
+mainwindow_gen.py
+*.txt
+*.elf
+*.nacp
+*.nro
+*.nso
+*.pfs0
+.idea/
+
