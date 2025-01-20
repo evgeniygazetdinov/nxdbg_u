@@ -1,11 +1,12 @@
 *~
 *.pyc
 mainwindow_gen.py
+# Allow CMakeLists.txt but ignore other txt files
 *.txt
+!CMakeLists.txt
 *.elf
 *.nacp
 *.nro
 *.nso
 *.pfs0
 .idea/
-

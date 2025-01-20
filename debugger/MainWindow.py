@@ -1,6 +1,6 @@
 # Copyright 2017 plutoo
 from PyQt5 import QtGui, QtWidgets
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import QThread, pyqtSignal, Qt
 
 
 import sys
@@ -29,6 +29,10 @@ from AdapterView import *
 
 
 class EventReceiveThread(QThread):
+
+    onDbgEvent = pyqtSignal(type(None))  # используем type(None) так как event может быть None
+
+
     def __init__(self, usb, dbg_handle):
         QThread.__init__(self)
         self.usb = usb
@@ -44,7 +48,7 @@ class EventReceiveThread(QThread):
                 event = self.usb.cmdGetDbgEvent(self.dbg_handle)
 
                 self.event.clear()
-                self.emit(pyqtSignal('onDbgEvent(PyQt_PyObject)'), event)
+                self.onDbgEvent.emit(event) 
                 self.event.wait()
 
             except SwitchError:
@@ -56,7 +60,6 @@ class MainDebugger(QtWidgets.QMainWindow):
     def __init__(self, usb, dbg_handle, parent=None):
         super(MainDebugger, self).__init__(parent)
         uic.loadUi('mainwindow.ui', self)
-        # self.setupUi(self)
 
 
         self.active_event = None
@@ -64,7 +67,7 @@ class MainDebugger(QtWidgets.QMainWindow):
         self.usb = usb
         self.dbg_handle = dbg_handle
         self.usb_thread = EventReceiveThread(usb, dbg_handle)
-
+        self.usb_thread.onDbgEvent.connect(self.onDbgEvent)
         AddressFormatter.AddressFormatter(self.usb, self.dbg_handle)
 
         self.bp_manager = BreakpointManager(self.usb, self.dbg_handle, self.treeBreakpoints)
@@ -83,7 +86,9 @@ class MainDebugger(QtWidgets.QMainWindow):
         self.adapters.append(AdapterView(usb, dbg_handle, expr_eval, self.lineCmdView2, self.textOutputView2))
         self.adapters.append(Playground(usb, dbg_handle, self))
 
-        self.connect(self.usb_thread, pyqtSignal('onDbgEvent(PyQt_PyObject)'), self.onDbgEvent)
+                # Создаем сигнал для событий отладки
+        # self.usb_thread.onDbgEvent = pyqtSignal(object)
+        # self.usb_thread.onDbgEvent.connect(self.onDbgEvent)
         self.usb_thread.start()
 
         self.lineCmd.returnPressed.connect(self.onUserCmd)
@@ -174,6 +179,20 @@ def main(argv):
             dbg_handle = usb.cmdAttachProcess(pid)
 
         elif argv[1] == '--nextlaunch':
+            """
+            Сервис должен отвечать в следующем формате:
+            Возвращает структуру с двумя полями:
+            rc (return code) - код возврата, 0 означает успех
+            data - данные ответа
+            Для cmdGetAppPid:
+            Если процесс еще не запущен:
+            rc не равно 0 (ошибка)
+            Метод вернет None
+            Если процесс запущен:
+            rc равно 0 (успех)
+            data содержит 8-байтовое число (64-битный PID)
+            Это число распаковывается с помощью struct.unpack('<Q', resp['data'])[0]
+            """
             usb = RemoteConnectionUsb()
             usb.cmdListenForAppLaunch()
 
@@ -196,12 +215,12 @@ def main(argv):
 
     try:
         app = QtWidgets.QApplication(argv)
-        #QtWidgets.QApplication.setStyle(QtGui.QStyleFactory.create('Cleanlooks'))
+        QtWidgets.QApplication.setStyle(QtWidgets.QStyleFactory.create('Cleanlooks'))
         form = MainDebugger(usb, dbg_handle)
         form.show()
         app.exec_()
     except Exception as e:
-        usb.cmdDetachProcess(dbg_handle)
+        # usb.cmdDetachProcess(dbg_handle)
         raise e
 
     return 0

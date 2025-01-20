@@ -130,7 +130,13 @@ class RemoteConnection:
 
     def cmdListenForAppLaunch(self): # Cmd10
         with self.lock:
-            self.write(struct.pack('<I', 10))
+            # Добавим магическое число и длину пакета
+            cmd = struct.pack('<I', 10)  # команда
+            length = struct.pack('<I', 4)  # длина данных
+            magic = b'DBGC'  # магическое число
+            
+            packet = magic + length + cmd
+            self.write(packet)
             resp = self.readResponse()
 
         self.checkResult(resp)
@@ -138,6 +144,10 @@ class RemoteConnection:
     def cmdGetAppPid(self): # Cmd11
         with self.lock:
             self.write(struct.pack('<I', 11))
+            """
+            Затем периодически отправляется команда 11 (cmdGetAppPid),
+             которая проверяет, запустилось ли приложение
+            """
             resp = self.readResponse()
 
         try:

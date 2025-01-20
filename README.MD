@@ -77,4 +77,20 @@ RemoteConnection*.py - Модули связи с сервисом
 Adapter*.py - Адаптеры для отображения информации
 mainwindow.ui - Qt дизайн интерфейса
 ```
+================================================
+### not solved issues 
+  ### debugger:
+    - [ ] handle usb connection for abstract switch
+    - [ ] write to 10 to service
+  ### service:
+    - [ ] print debug info
+    - [ ] how run service as worker
+================================================
+### solved issues
+  ### service:
+  - [v] compiling service
+  ### debugger:
+  - [v] moved to qt5 and python3
+  - [v] worked test mode
+
 Copyright © 2017 plutoo
