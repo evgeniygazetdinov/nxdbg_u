@@ -1,16 +1,40 @@
 {
     "name": "nxdbg",
-    "title_id": "0100000000000000",
-    "program_id": "0100000000000000",
-    "version": "1.0.0",
-    "main_thread_stack_size": "0x20000",
-    "main_thread_priority": 43,
+
+    "title_id_range_min": "0x0100000000000000",
+    "title_id_range_max": "0x0100000000000000",
+    "program_id": "0x0100000000000000",
+    "program_id_range_min": "0x0100000000000000",
+    "program_id_range_max": "0x0100000000000000",
+    "main_thread_stack_size": "0x00004000",
+    "main_thread_priority": 44,
     "default_cpu_id": 3,
-    "process_category": 1,
+    "process_category": 0,
+    "pool_partition": 2,
+    "is_64_bit": true,
+    "address_space_type": 3,
+    "system_resource_size": "0x01000000",
+    "version": "0x00000000",
+    "is_retail": true,
+    "optimize_memory_allocation": true,
+    "disable_device_address_space_merge": false,
+    "enable_alias_region_extra_size": false,
+    "prevent_code_reads": false,
+    "signature_key_generation": 0,
+    "filesystem_access": {
+        "log": false,
+        "content_mount_point": "none",
+        "save_data_mount_point": "none"
+    },
     "kernel_capabilities": [
         {
-            "type": "handle_table_size",
-            "value": 512
+            "type": "kernel_flags",
+            "value": {
+                "highest_thread_priority": 63,
+                "lowest_thread_priority": 24,
+                "highest_cpu_id": 3,
+                "lowest_cpu_id": 3
+            }
         },
         {
             "type": "syscalls",
@@ -46,23 +70,15 @@
                 "svcSignalProcessWideKey": "0x1d",
                 "svcGetSystemTick": "0x1e",
                 "svcConnectToNamedPort": "0x1f",
-                "svcSendSyncRequestLight": "0x20",
-                "svcSendSyncRequest": "0x21",
-                "svcSendSyncRequestWithUserBuffer": "0x22",
-                "svcSendAsyncRequestWithUserBuffer": "0x23",
-                "svcGetProcessId": "0x24",
-                "svcGetThreadId": "0x25",
+                "svcSendSyncRequest": "0x20",
+                "svcSendSyncRequestWithUserBuffer": "0x21",
+                "svcSendAsyncRequestWithUserBuffer": "0x22",
+                "svcGetProcessId": "0x23",
+                "svcGetThreadId": "0x24",
                 "svcBreak": "0x26",
                 "svcOutputDebugString": "0x27",
                 "svcReturnFromException": "0x28",
                 "svcGetInfo": "0x29",
-                "svcGetSystemInfo": "0x6f",
-                "svcCreateSession": "0x40",
-                "svcAcceptSession": "0x41",
-                "svcReplyAndReceiveLight": "0x42",
-                "svcReplyAndReceive": "0x43",
-                "svcReplyAndReceiveWithUserBuffer": "0x44",
-                "svcCreateEvent": "0x45",
                 "svcDebugActiveProcess": "0x60",
                 "svcGetDebugEvent": "0x63",
                 "svcContinueDebugEvent": "0x64",
@@ -73,9 +89,18 @@
                 "svcQueryDebugProcessMemory": "0x69",
                 "svcReadDebugProcessMemory": "0x6a",
                 "svcWriteDebugProcessMemory": "0x6b",
-                "svcSetHardwareBreakPoint": "0x6c",
                 "svcGetDebugThreadParam": "0x6d"
+            }
+        },
+        {
+            "type": "map",
+            "value": {
+                "address": "0x7000000000",
+                "size": "0x1000000",
+                "is_ro": false,
+                "is_io": false
             }
         }
     ]
+    
 }

@@ -7,6 +7,19 @@
 #include <stdio.h>
 
 const int KEY_MINUS = 2048;
+#define DEBUG 1
+
+#ifdef DEBUG
+#define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#else
+#define DEBUG_PRINT(...)
+#endif
+
+// typedef struct {
+//     Result result;     // Результат операции
+//     size_t dataSize;   // Размер данных
+//     u8 data[0x1000];  // Буфер для данных
+// } DebuggerResponse;
 
 // Определение функции для проверки версии ядра
 static bool kernelAbove300(void) {
@@ -146,15 +159,48 @@ typedef struct {
 
 void sendUsbResponse(DebuggerResponse resp)
 {
-    usbCommsWrite((void*)&resp, 8);
+    #ifdef DEBUG
+    DEBUG_PRINT("Отправка ответа:\n");
+    DEBUG_PRINT("  Result: 0x%x\n", resp.Result);
+    DEBUG_PRINT("  LenBytes: %u\n", resp.LenBytes);
+    if (resp.LenBytes > 0 && resp.Data != NULL) {
+        DEBUG_PRINT("  Data: ");
+        u8* data = (u8*)resp.Data;
+        for(u32 i = 0; i < resp.LenBytes && i < 32; i++) {
+            DEBUG_PRINT("%02x ", data[i]);
+        }
+        DEBUG_PRINT("\n");
+    }
+    #endif
 
-    if (resp.LenBytes > 0) {
+    // Отправляем результат и размер (8 байт)
+    usbCommsWrite(&resp, 8);
+
+    // Если есть данные, отправляем их
+    if (resp.LenBytes > 0 && resp.Data != NULL) {
         usbCommsWrite(resp.Data, resp.LenBytes);
     }
 }
 
 int handleUsbCommand()
 {
+    u32 cmd;
+    size_t size;
+
+    #ifdef DEBUG
+    DEBUG_PRINT("Ожидание USB команды...\n");
+    #endif
+
+    // Читаем заголовок
+    if (R_FAILED(usbCommsRead(&cmd, sizeof(cmd)))) {
+        DEBUG_PRINT("Ошибка чтения команды\n");
+        return 1;
+    }
+
+    #ifdef DEBUG
+    DEBUG_PRINT("Получена команда: %d (0x%x)\n", cmd, cmd);
+    #endif
+
     DebuggerRequest r;
     DebuggerResponse resp;
     Result rc;
@@ -409,6 +455,15 @@ int handleUsbCommand()
 
 
 bool mainLoop() {
+     #ifdef DEBUG
+    DEBUG_PRINT("Инициализация USB...\n");
+    #endif
+
+    if (R_FAILED(usbCommsInitialize())) {
+        DEBUG_PRINT("Ошибка инициализации USB\n");
+        return false;
+    }
+
     printf("\n\n-------- Main Menu --------\n");
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     PadState pad;

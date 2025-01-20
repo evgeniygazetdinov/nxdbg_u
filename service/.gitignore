@@ -1,3 +1,4 @@
 build/
 cmake-build-debug/
 !CMakeLists.txt
+cmake_install.cmake
