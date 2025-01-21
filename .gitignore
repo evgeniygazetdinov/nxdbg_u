@@ -6,7 +6,13 @@ mainwindow_gen.py
 !CMakeLists.txt
 *.elf
 *.nacp
+
+*.nsp
+*.npdm
+*.bak
 *.nro
 *.nso
 *.pfs0
 .idea/
+CMakeFiles/
+service/libnxdbg_service.a

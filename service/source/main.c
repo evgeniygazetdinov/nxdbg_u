@@ -7,6 +7,20 @@
 #include <stdio.h>
 
 const int KEY_MINUS = 2048;
+const int KEY_PLUS = 1024;
+#define DEBUG 1
+
+#ifdef DEBUG
+#define DEBUG_PRINT(...) printf(__VA_ARGS__)
+#else
+#define DEBUG_PRINT(...)
+#endif
+
+// typedef struct {
+//     Result result;     // Результат операции
+//     size_t dataSize;   // Размер данных
+//     u8 data[0x1000];  // Буфер для данных
+// } DebuggerResponse;
 
 // Определение функции для проверки версии ядра
 static bool kernelAbove300(void) {
@@ -146,15 +160,48 @@ typedef struct {
 
 void sendUsbResponse(DebuggerResponse resp)
 {
-    usbCommsWrite((void*)&resp, 8);
+    #ifdef DEBUG
+    DEBUG_PRINT("Отправка ответа:\n");
+    DEBUG_PRINT("  Result: 0x%x\n", resp.Result);
+    DEBUG_PRINT("  LenBytes: %u\n", resp.LenBytes);
+    if (resp.LenBytes > 0 && resp.Data != NULL) {
+        DEBUG_PRINT("  Data: ");
+        u8* data = (u8*)resp.Data;
+        for(u32 i = 0; i < resp.LenBytes && i < 32; i++) {
+            DEBUG_PRINT("%02x ", data[i]);
+        }
+        DEBUG_PRINT("\n");
+    }
+    #endif
 
-    if (resp.LenBytes > 0) {
+    // Отправляем результат и размер (8 байт)
+    usbCommsWrite(&resp, 8);
+
+    // Если есть данные, отправляем их
+    if (resp.LenBytes > 0 && resp.Data != NULL) {
         usbCommsWrite(resp.Data, resp.LenBytes);
     }
 }
 
 int handleUsbCommand()
 {
+    u32 cmd;
+    size_t size;
+
+    #ifdef DEBUG
+    DEBUG_PRINT("Ожидание USB команды...\n");
+    #endif
+
+    // Читаем заголовок
+    if (R_FAILED(usbCommsRead(&cmd, sizeof(cmd)))) {
+        DEBUG_PRINT("Ошибка чтения команды\n");
+        return 1;
+    }
+
+    #ifdef DEBUG
+    DEBUG_PRINT("Получена команда: %d (0x%x)\n", cmd, cmd);
+    #endif
+
     DebuggerRequest r;
     DebuggerResponse resp;
     Result rc;
@@ -409,51 +456,69 @@ int handleUsbCommand()
 
 
 bool mainLoop() {
-    printf("\n\n-------- Main Menu --------\n");
+     #ifdef DEBUG
+    DEBUG_PRINT("Инициализация USB...\n");
+    #endif
+
+    Result rc = usbCommsInitialize();
+    if (R_FAILED(rc)) {
+        DEBUG_PRINT("Ошибка инициализации USB: %x\n", rc);
+        return false;
+    }
+
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     PadState pad;
     padInitializeDefault(&pad);
+
+    bool isDebugMode = false;
     while (appletMainLoop()) {
 
-        padUpdate(&pad);
+         padUpdate(&pad);
         u64 kDown = padGetButtonsDown(&pad);
-        if (kDown & KEY_MINUS) {
+
+        if (kDown & KEY_MINUS && !isDebugMode) {
+            isDebugMode = true;
             consoleInit(NULL);
-            printf("hello service worker\n");  // Добавляем \n
-            consoleUpdate(NULL);  // Обновляем консоль
-
-            Result rc;
-
-            rc = pmdmntInitialize();
-            if (rc) {
-                printf("Failed to initialize pm:dmnt: %x\n", rc);  // Добавляем отладочный вывод
-                consoleUpdate(NULL);
-                fatalThrow(MAKERESULT(Module_Libnx, 222));
-            }
-
-            rc = usbCommsInitialize();
-            if (rc) {
-                printf("Failed to initialize USB: %x\n", rc);  // Добавляем отладочный вывод
-                consoleUpdate(NULL);
-                fatalThrow(rc);
-            }
-
-            printf("Initialization complete, entering main loop\n");  // Добавляем отладочный вывод
+            printf("hello service worker\n");
             consoleUpdate(NULL);
 
-            while (handleUsbCommand()) {
-                consoleUpdate(NULL);  // Обновляем консоль в цикле
+            rc = pmdmntInitialize();
+            if (R_FAILED(rc)) {
+                printf("Failed to initialize pm:dmnt: %x\n", rc);
+                consoleUpdate(NULL);
+                break;
             }
 
+            printf("Initialization complete, entering debug mode\n");
+            consoleUpdate(NULL);
+        }
+
+        if (isDebugMode) {
+            if (!handleUsbCommand()) {
+                printf("USB command handling failed, exiting debug mode\n");
+                consoleUpdate(NULL);
+                isDebugMode = false;
+                pmdmntExit();
+                continue;
+            }
+            consoleUpdate(NULL);
+        }
+
+        if (kDown & KEY_PLUS) {
+            break;
         }
     }
+
+    if (isDebugMode) {
+        pmdmntExit();
+    }
+    usbCommsExit();
+    return true;
 }
 
 int main(int argc, char *argv[])
 {
-    consoleInit(NULL);
     mainLoop();
-    consoleExit(NULL);
     return 0;
 }
 
