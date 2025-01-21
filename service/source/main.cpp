@@ -1,13 +1,20 @@
 // Copyright 2017 plutoo
 #include <switch.h>
-#include <string.h>
-#include <switch/services/pm.h>
-#include <switch/runtime/devices/usb_comms.h>
-#include <switch/services/fatal.h>
-#include <stdio.h>
+#include "string"
+#include <cstdio>
+#include <thread>
+#include <sys/stat.h>
+#include <memory.h>
+
 
 const int KEY_MINUS = 2048;
 const int KEY_PLUS = 1024;
+
+const int KEY_X = 4;
+const int KEY_Y = 28;
+const int KEY_A = 5;
+const int KEY_B = 27;
+
 #define DEBUG 1
 
 #ifdef DEBUG
@@ -16,11 +23,6 @@ const int KEY_PLUS = 1024;
 #define DEBUG_PRINT(...)
 #endif
 
-// typedef struct {
-//     Result result;     // Результат операции
-//     size_t dataSize;   // Размер данных
-//     u8 data[0x1000];  // Буфер для данных
-// } DebuggerResponse;
 
 // Определение функции для проверки версии ядра
 static bool kernelAbove300(void) {
@@ -185,34 +187,20 @@ void sendUsbResponse(DebuggerResponse resp)
 
 int handleUsbCommand()
 {
-    u32 cmd;
+    // u32 cmd;
     size_t size;
-
-    #ifdef DEBUG
-    DEBUG_PRINT("Ожидание USB команды...\n");
-    #endif
-
-    // Читаем заголовок
-    if (R_FAILED(usbCommsRead(&cmd, sizeof(cmd)))) {
-        DEBUG_PRINT("Ошибка чтения команды\n");
-        return 1;
-    }
-
-    #ifdef DEBUG
-    DEBUG_PRINT("Получена команда: %d (0x%x)\n", cmd, cmd);
-    #endif
-
+    printf("inside handleUsbCommand");
+    consoleInit(NULL);
     DebuggerRequest r;
     DebuggerResponse resp;
     Result rc;
 
-    size_t len = usbCommsRead(&r, sizeof(r));
-
-    if (len != sizeof(r)) {
-        // USB transfer failure.
-        //fatalSimple(222 | (1 << 9));
-        return 1;
-    }
+//   size_t len = usbCommsRead(&r, sizeof(r));e
+// if (len == 0) {
+//     printf("No data\n");
+//     return false; // нет данных, выходим сразу
+// }
+ 
 
     resp.LenBytes = 0;
     resp.Data = NULL;
@@ -455,70 +443,92 @@ int handleUsbCommand()
 }
 
 
-bool mainLoop() {
-     #ifdef DEBUG
-    DEBUG_PRINT("Инициализация USB...\n");
-    #endif
 
-    Result rc = usbCommsInitialize();
-    if (R_FAILED(rc)) {
-        DEBUG_PRINT("Ошибка инициализации USB: %x\n", rc);
-        return false;
+
+void log_to_file(const char* message) {
+    FILE* log_file = fopen("sdmc:/switch/dolphin-emu/dolphin-launcher.log", "a");
+    if (log_file) {
+        time_t now = time(NULL);
+        char timestamp[26];
+        ctime_r(&now, timestamp);
+        timestamp[24] = '\0'; // Убираем перенос строки
+        fprintf(log_file, "[%s] %s\n", timestamp, message);
+        fclose(log_file);
     }
+}
+
+
+
+// Function to execute a command on Switch with arguments
+
+
+bool mainLoop() {
+    printf("\n\n-------- Main Menu --------\n");
+    printf("Press B to run debug runner\n");
+    printf("Press - to exit\n");
+    log_to_file("Main menu started");
 
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     PadState pad;
     padInitializeDefault(&pad);
-
-    bool isDebugMode = false;
+    bool needToRun = false;
+    bool possibleToRun = false;
     while (appletMainLoop()) {
-
-         padUpdate(&pad);
+        // Сканируем ввод
+        
+        padUpdate(&pad);
         u64 kDown = padGetButtonsDown(&pad);
+        if (kDown & KEY_MINUS || kDown & KEY_MINUS & possibleToRun) {
+            printf("Exiting...\n");
+            log_to_file("Exiting...");
+            return false;
+        }
 
-        if (kDown & KEY_MINUS && !isDebugMode) {
-            isDebugMode = true;
-            consoleInit(NULL);
-            printf("hello service worker\n");
-            consoleUpdate(NULL);
+        if (kDown & KEY_B) {
+            printf("\nStarting Debug launch process...\n");
+            needToRun = true;
+        }
+        if (needToRun){
+            Result rc;
+            printf("\n  before initialize pmdmntInitialize\n");
 
             rc = pmdmntInitialize();
-            if (R_FAILED(rc)) {
-                printf("Failed to initialize pm:dmnt: %x\n", rc);
-                consoleUpdate(NULL);
-                break;
+            printf("\n success initialize pmdmntInitialize\n");
+            if (rc) {
+                // Failed to get PM debug interface.
+                 fatalThrow(222 | (6 << 9));
             }
-
-            printf("Initialization complete, entering debug mode\n");
-            consoleUpdate(NULL);
-        }
-
-        if (isDebugMode) {
-            if (!handleUsbCommand()) {
-                printf("USB command handling failed, exiting debug mode\n");
-                consoleUpdate(NULL);
-                isDebugMode = false;
-                pmdmntExit();
-                continue;
+               
+            printf("\n  before initialize usbCommsInitialize\n");
+            rc = usbCommsInitialize();
+            printf("\n  success initialize usbCommsInitialize\n");
+            if (rc) {
+                fatalThrow(rc);
             }
+            needToRun = false;
+            possibleToRun = true;
+            // while ();
+        }
+        if(possibleToRun){
+            printf("\n  success ready for handleUsbCommand\n");
             consoleUpdate(NULL);
-        }
+            handleUsbCommand();
 
-        if (kDown & KEY_PLUS) {
-            break;
         }
-    }
+        consoleUpdate(NULL);
+        svcSleepThread(100000000ULL);
+    }        
 
-    if (isDebugMode) {
-        pmdmntExit();
-    }
-    usbCommsExit();
     return true;
 }
 
-int main(int argc, char *argv[])
-{
+
+int main(int argc, char* argv[]) {
+    // Инициализация консоли
+
+    consoleInit(NULL);
+    log_to_file("Program started");
     mainLoop();
+    consoleExit(NULL);
     return 0;
 }
-

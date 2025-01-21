@@ -128,12 +128,13 @@ mainwindow.ui - Qt дизайн интерфейса
     - [ ] handle usb connection for abstract switch
     - [ ] write to 10 to service
   ### service:
-    - [ ] print debug info
+    - [ ] abtain info about process and send to gui
     - [ ] how run service as worker
 ================================================
 ### solved issues
   ### service:
   - [v] compiling service
+  - [v] print debug info
   ### debugger:
   - [v] moved to qt5 and python3
   - [v] worked test mode
