@@ -26,7 +26,9 @@ class RemoteConnectionUsb(RemoteConnection):
         self.dev = usb.core.find(idVendor=0x057e, idProduct=0x3000)
 
         if self.dev is None:
-            raise Exception('Устройство не найдено')
+            self.dev = usb.core.find(idVendor=0x18d1, idProduct=0x4ee0)
+            if self.dev is None:
+                raise Exception('Устройство не найдено')
 
         try:
             # Получим информацию об устройстве

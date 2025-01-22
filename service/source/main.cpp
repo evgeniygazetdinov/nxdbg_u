@@ -1,10 +1,61 @@
-// Copyright 2017 plutoo
 #include <switch.h>
 #include "string"
 #include <cstdio>
 #include <thread>
 #include <sys/stat.h>
 #include <memory.h>
+#include <cstdarg>
+#include <switch/services/usb.h>
+#include <switch/runtime/devices/usb_comms.h>
+
+void printer(const char* format, ...) {
+    char buffer[256];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    
+    printf("%s\n", buffer);
+    svcSleepThread(250000000ULL);
+    consoleUpdate(NULL);
+}
+
+// USB дескрипторы и информация об устройстве
+static UsbDsDeviceInfo g_device_info = {
+    .idVendor = 0x057E,
+    .idProduct = 0x3000,
+    .bcdDevice = 0x0100,
+    .Manufacturer = "Nintendo",
+    .Product = "NXDebugger",
+    .SerialNumber = "0001"
+};
+
+static usb_interface_descriptor g_interface_descriptor = {
+    .bLength = USB_DT_INTERFACE_SIZE,
+    .bDescriptorType = USB_DT_INTERFACE,
+    .bInterfaceNumber = USBDS_DEFAULT_InterfaceNumber,
+    .bAlternateSetting = 0x00,
+    .bNumEndpoints = 0x02,
+    .bInterfaceClass = 0xFF,
+    .bInterfaceSubClass = 0xFF,
+    .bInterfaceProtocol = 0xFF,
+};
+
+static usb_endpoint_descriptor g_endpoint_descriptor_in = {
+    .bLength = USB_DT_ENDPOINT_SIZE,
+    .bDescriptorType = USB_DT_ENDPOINT,
+    .bEndpointAddress = USB_ENDPOINT_IN,
+    .bmAttributes = USB_TRANSFER_TYPE_BULK,
+    .wMaxPacketSize = 0x200,
+};
+
+static usb_endpoint_descriptor g_endpoint_descriptor_out = {
+    .bLength = USB_DT_ENDPOINT_SIZE,
+    .bDescriptorType = USB_DT_ENDPOINT,
+    .bEndpointAddress = USB_ENDPOINT_OUT,
+    .bmAttributes = USB_TRANSFER_TYPE_BULK,
+    .wMaxPacketSize = 0x200,
+};
 
 
 const int KEY_MINUS = 2048;
@@ -15,15 +66,192 @@ const int KEY_Y = 28;
 const int KEY_A = 5;
 const int KEY_B = 27;
 
-#define DEBUG 1
+// USB endpoints
+static UsbDsEndpoint *g_usbComms_endpoint_in = NULL;
+static UsbDsEndpoint *g_usbComms_endpoint_out = NULL;
+static u8 g_usbComms_endpoint_in_buffer[0x1000];
+static u8 g_usbComms_endpoint_out_buffer[0x1000];
+static u8 g_usbComms_buffer[0x1000];
+static UsbDsInterface* g_interface = NULL;
+static UsbDsEndpoint* g_endpoint_in = NULL;
+static UsbDsEndpoint* g_endpoint_out = NULL;
 
-#ifdef DEBUG
-#define DEBUG_PRINT(...) printf(__VA_ARGS__)
-#else
-#define DEBUG_PRINT(...)
-#endif
+Result initializeUsb2() {
+    Result rc = 0;
+    int retryCount = 0;
+    const int maxRetries = 10;
+    
+    printer("Starting USB initialization...");
+
+    // Сначала деинициализируем, если уже было инициализировано
+    usbCommsExit();
+    
+    // Даем системе время очистить предыдущее состояние
+    svcSleepThread(500000000ULL); // 500ms
+    
+    while (retryCount < maxRetries) {
+        // Инициализируем USB через usbComms
+        rc = usbCommsInitialize();
+        if (R_FAILED(rc)) {
+            printer("usbCommsInitialize failed: %x", rc);
+            retryCount++;
+            if (retryCount < maxRetries) {
+                printer("Retrying USB initialization (%d/%d)...", retryCount + 1, maxRetries);
+                svcSleepThread(1000000000ULL);
+                continue;
+            }
+            return rc;
+        }
+        printer("USB initialized successfully");
+
+        // Проверяем, что USB действительно работает
+        if (!usbCommsInitialize()) {
+            printer("USB initialization check failed");
+            usbCommsExit();
+            retryCount++;
+            if (retryCount < maxRetries) {
+                printer("Retrying USB initialization (%d/%d)...", retryCount + 1, maxRetries);
+                svcSleepThread(1000000000ULL);
+                continue;
+            }
+            return -1;
+        }
+        
+        printer("USB is ready");
+        break;
+    }
+
+    printer("USB initialization complete!");
+    return rc;
+}
+
+Result initializeUsb() {
+    Result rc = 0;
+    int retryCount = 0;
+    const int maxRetries = 10;
+    
+    printer("Starting USB initialization...");
+
+    // Сначала деинициализируем, если уже было инициализировано
+    usbDsExit();
+    
+    // Даем системе время очистить предыдущее состояние
+    svcSleepThread(500000000ULL); // 500ms
+
+    // Проверяем состояние USB
+    UsbState state;
+    rc = usbDsGetState(&state);
+    if (R_SUCCEEDED(rc)) {
+        printer("Current USB state: %d", state);
+    }
+    
+    while (retryCount < maxRetries) {
+        // Инициализируем USB
+        rc = usbDsInitialize();
+        if (R_FAILED(rc)) {
+            printer("usbDsInitialize failed: %x", rc);
+            retryCount++;
+            if (retryCount < maxRetries) {
+                printer("Retrying USB initialization (%d/%d)...", retryCount + 1, maxRetries);
+                svcSleepThread(1000000000ULL);
+                continue;
+            }
+            return rc;
+        }
+        printer("usbDsInitialize success");
+
+        // Ждем готовности USB с увеличенным таймаутом
+        rc = usbDsWaitReady(5000000000ULL); // 5 seconds
+        if (R_FAILED(rc)) {
+            printer("USB not ready: %x", rc);
+            usbDsExit();
+            retryCount++;
+            if (retryCount < maxRetries) {
+                printer("Retrying USB initialization (%d/%d)...", retryCount + 1, maxRetries);
+                svcSleepThread(1000000000ULL);
+                continue;
+            }
+            return rc;
+        }
+        
+        printer("USB is ready");
+        break;
+    }
+
+    // Дополнительная пауза после успешной инициализации
+    svcSleepThread(1000000000ULL); // 1 second
+
+    // Создаем интерфейс с базовыми параметрами
+    rc = usbDsGetDsInterface(&g_interface, &g_interface_descriptor, "nx-debug");
+    if (R_FAILED(rc)) {
+        printer("Failed to get interface: %x", rc);
+        usbDsExit();
+        return rc;
+    }
+    printer("Interface created");
+
+    // Пауза после создания интерфейса
+    svcSleepThread(1000000000ULL); // 1 second
+
+    // Создаем endpoints
+    rc = usbDsInterface_GetDsEndpoint(g_interface, &g_endpoint_in, &g_endpoint_descriptor_in);
+    if (R_FAILED(rc)) {
+        printer("Failed to get input endpoint: %x", rc);
+        usbDsExit();
+        return rc;
+    }
+    printer("Input endpoint created");
+
+    rc = usbDsInterface_GetDsEndpoint(g_interface, &g_endpoint_out, &g_endpoint_descriptor_out);
+    if (R_FAILED(rc)) {
+        printer("Failed to get output endpoint: %x", rc);
+        usbDsExit();
+        return rc;
+    }
+    printer("Output endpoint created");
+
+    printer("USB initialization complete!");
+
+    return rc;
+}
 
 
+Result tryUsbCommsRead2(void* buffer, size_t size, size_t *transferredSize, u64 timeout = 100000000ULL) {
+    Result rc = 0;
+    u32 urbId = 0;
+    UsbDsReportData reportdata;
+    u32 tmp_transferredSize = 0;
+
+    // Проверяем готовность USB с таймаутом
+    rc = usbDsWaitReady(timeout);
+    if (R_FAILED(rc)) {
+        printer("USB not ready: %x\n", rc);
+        return rc;
+    }
+
+    // Начинаем асинхронный прием данных
+    rc = usbDsEndpoint_PostBufferAsync(g_endpoint_in, buffer, size, &urbId);
+    if (R_FAILED(rc)) {
+        printer("Failed to post buffer: %x\n", rc);
+        return rc;
+    }
+
+    // Ждем завершения с таймаутом
+    rc = eventWait(&g_endpoint_in->CompletionEvent, timeout);
+    if (R_FAILED(rc)) {
+        printer("USB read timeout\n");
+        return MAKERESULT(Module_Libnx, LibnxError_Timeout);
+    }
+
+    rc = usbDsEndpoint_GetReportData(g_endpoint_in, &reportdata);
+    if (R_FAILED(rc)) return rc;
+
+    rc = usbDsParseReportData(&reportdata, urbId, NULL, &tmp_transferredSize);
+    if (R_FAILED(rc)) return rc;
+
+    if (transferredSize) *transferredSize = tmp_transferredSize;
+    return rc;
+}
 // Определение функции для проверки версии ядра
 static bool kernelAbove300(void) {
     u64 major=0, minor=0;
@@ -189,21 +417,29 @@ int handleUsbCommand()
 {
     // u32 cmd;
     size_t size;
-    printf("inside handleUsbCommand");
+    printer("inside handleUsbCommand");
     consoleInit(NULL);
     DebuggerRequest r;
     DebuggerResponse resp;
     Result rc;
+    size_t transferredSize = 0;
 
-//   size_t len = usbCommsRead(&r, sizeof(r));e
-// if (len == 0) {
-//     printf("No data\n");
-//     return false; // нет данных, выходим сразу
-// }
- 
+   rc = tryUsbCommsRead2(&r, sizeof(r), &transferredSize);
+    if (R_FAILED(rc)) {
+        if (rc == MAKERESULT(Module_Libnx, LibnxError_Timeout)) {
+            return false; // Таймаут - просто выходим
+        }
+        printer("USB read error: %x\n", rc);
+        return false;
+    }
 
+    if (transferredSize != sizeof(r)) {
+        printer("Incomplete data: %zu/%zu\n", transferredSize, sizeof(r));
+        return false;
+    }
+    printer("Received request type: %u\n", r.Type);
     resp.LenBytes = 0;
-    resp.Data = NULL;
+    resp.Result = 0;
 
     switch (r.Type) {
     case REQ_LIST_PROCESSES: { // Cmd0
@@ -479,40 +715,49 @@ bool mainLoop() {
         padUpdate(&pad);
         u64 kDown = padGetButtonsDown(&pad);
         if (kDown & KEY_MINUS || kDown & KEY_MINUS & possibleToRun) {
-            printf("Exiting...\n");
+            printer("Exiting...\n");
             log_to_file("Exiting...");
+            if (g_interface) {
+                usbDsInterface_Close(g_interface);
+                usbDsExit();
+            }
             return false;
         }
 
         if (kDown & KEY_B) {
-            printf("\nStarting Debug launch process...\n");
+            printer("\nStarting Debug launch process...\n");
             needToRun = true;
         }
         if (needToRun){
-            Result rc;
-            printf("\n  before initialize pmdmntInitialize\n");
+           Result rc;
+            printer("before initialize pmdmntInitialize");
 
             rc = pmdmntInitialize();
-            printf("\n success initialize pmdmntInitialize\n");
+            printer("\n success initialize pmdmntInitialize\n");
             if (rc) {
                 // Failed to get PM debug interface.
-                 fatalThrow(222 | (6 << 9));
+                fatalThrow(222 | (6 << 9));
             }
-               
-            printf("\n  before initialize usbCommsInitialize\n");
-            rc = usbCommsInitialize();
-            printf("\n  success initialize usbCommsInitialize\n");
-            if (rc) {
-                fatalThrow(rc);
+                
+            printer("\n  before initialize USB\n");
+            rc = initializeUsb2();
+            if (R_FAILED(rc)) {
+                printer("USB initialization failed: %x\n", rc);
+                 pmdmntExit();
+                return false;
             }
+            printer("\n  success initialize USB\n");
+                        svcSleepThread(1000000000ULL); // 1 секунда
             needToRun = false;
             possibleToRun = true;
-            // while ();
+                // while ();
         }
         if(possibleToRun){
-            printf("\n  success ready for handleUsbCommand\n");
-            consoleUpdate(NULL);
-            handleUsbCommand();
+            printer("\n  success ready for handleUsbCommand\n");
+            if (!handleUsbCommand()) {
+                printer("\n  USB command failed, retrying...\n");
+                svcSleepThread(100000000ULL); // 100ms пауза перед следующей попыткой
+            }
 
         }
         consoleUpdate(NULL);

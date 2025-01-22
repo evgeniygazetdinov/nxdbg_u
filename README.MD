@@ -128,6 +128,7 @@ mainwindow.ui - Qt дизайн интерфейса
     - [ ] handle usb connection for abstract switch
     - [ ] write to 10 to service
   ### service:
+    - [ ] stunning on handleUsbCommand
     - [ ] abtain info about process and send to gui
     - [ ] how run service as worker
 ================================================
