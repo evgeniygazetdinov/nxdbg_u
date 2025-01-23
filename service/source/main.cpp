@@ -8,6 +8,8 @@
 #include <switch/services/usb.h>
 #include <switch/runtime/devices/usb_comms.h>
 
+
+
 void printer(const char* format, ...) {
     char buffer[256];
     va_list args;
@@ -76,54 +78,105 @@ static UsbDsInterface* g_interface = NULL;
 static UsbDsEndpoint* g_endpoint_in = NULL;
 static UsbDsEndpoint* g_endpoint_out = NULL;
 
-Result initializeUsb2() {
-    Result rc = 0;
-    int retryCount = 0;
-    const int maxRetries = 10;
-    
-    printer("Starting USB initialization...");
 
-    // Сначала деинициализируем, если уже было инициализировано
-    usbCommsExit();
-    
-    // Даем системе время очистить предыдущее состояние
-    svcSleepThread(500000000ULL); // 500ms
-    
-    while (retryCount < maxRetries) {
-        // Инициализируем USB через usbComms
-        rc = usbCommsInitialize();
-        if (R_FAILED(rc)) {
-            printer("usbCommsInitialize failed: %x", rc);
-            retryCount++;
-            if (retryCount < maxRetries) {
-                printer("Retrying USB initialization (%d/%d)...", retryCount + 1, maxRetries);
-                svcSleepThread(1000000000ULL);
-                continue;
-            }
-            return rc;
-        }
-        printer("USB initialized successfully");
 
-        // Проверяем, что USB действительно работает
-        if (!usbCommsInitialize()) {
-            printer("USB initialization check failed");
-            usbCommsExit();
-            retryCount++;
-            if (retryCount < maxRetries) {
-                printer("Retrying USB initialization (%d/%d)...", retryCount + 1, maxRetries);
-                svcSleepThread(1000000000ULL);
-                continue;
-            }
-            return -1;
-        }
-        
-        printer("USB is ready");
-        break;
+const char* getUsbStateName(UsbState state) {
+    switch (state) {
+        case UsbState_Detached:   return "Detached (0)";
+        case UsbState_Attached:   return "Attached (1)";
+        case UsbState_Powered:    return "Powered (2)";
+        case UsbState_Default:    return "Default (3)";
+        case UsbState_Address:    return "Address (4)";
+        case UsbState_Configured: return "Configured (5)";
+        default:                  return "Unknown";
     }
-
-    printer("USB initialization complete!");
-    return rc;
 }
+
+#define USB_DT_BOS 0x0F
+
+// USB descriptor sizes
+#define USB_DT_CONFIG_SIZE 9
+#define USB_DT_INTERFACE_SIZE 9
+#define USB_DT_ENDPOINT_SIZE 7
+
+// USB configuration attributes
+#define USB_CONFIG_ATT_ONE      (1 << 7) // Must be set
+#define USB_CONFIG_ATT_SELFPOWER    (1 << 6) // Self powered
+#define USB_CONFIG_ATT_WAKEUP   (1 << 5) // Can wake up
+#define USB_CONFIG_ATT_BATTERY  (1 << 4) // Battery powered
+
+static const usb_device_descriptor device_descriptor = {
+    .bLength = USB_DT_DEVICE_SIZE,
+    .bDescriptorType = USB_DT_DEVICE,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = 0xFF,
+    .bDeviceSubClass = 0xFF,
+    .bDeviceProtocol = 0xFF,
+    .bMaxPacketSize0 = 0x40,
+    .idVendor = 0x057E,
+    .idProduct = 0x3000,
+    .bcdDevice = 0x0100,
+    .iManufacturer = 1,
+    .iProduct = 2,
+    .iSerialNumber = 3,
+    .bNumConfigurations = 1
+};
+
+static const struct {
+    struct usb_config_descriptor config;
+    struct usb_interface_descriptor interface;
+    struct usb_endpoint_descriptor endpoint_in;
+    struct usb_endpoint_descriptor endpoint_out;
+} __attribute__((packed)) config_descriptor = {
+    .config = {
+        .bLength = USB_DT_CONFIG_SIZE,
+        .bDescriptorType = USB_DT_CONFIG,
+        .wTotalLength = sizeof(config_descriptor),
+        .bNumInterfaces = 1,
+        .bConfigurationValue = 1,
+        .iConfiguration = 0,
+        .bmAttributes = USB_CONFIG_ATT_ONE,  // Убрал SELFPOWER
+        .MaxPower = 250  // Увеличил потребление питания
+    },
+    .interface = {
+        .bLength = USB_DT_INTERFACE_SIZE,
+        .bDescriptorType = USB_DT_INTERFACE,
+        .bInterfaceNumber = 0,
+        .bAlternateSetting = 0,
+        .bNumEndpoints = 2,
+        .bInterfaceClass = 0xFF,  // Vendor specific
+        .bInterfaceSubClass = 0x00,
+        .bInterfaceProtocol = 0x00,
+        .iInterface = 0
+    },
+    .endpoint_in = {
+        .bLength = USB_DT_ENDPOINT_SIZE,
+        .bDescriptorType = USB_DT_ENDPOINT,
+        .bEndpointAddress = USB_ENDPOINT_IN | 1,
+        .bmAttributes = USB_TRANSFER_TYPE_BULK,
+        .wMaxPacketSize = 0x40,  // Уменьшил размер пакета
+        .bInterval = 0
+    },
+    .endpoint_out = {
+        .bLength = USB_DT_ENDPOINT_SIZE,
+        .bDescriptorType = USB_DT_ENDPOINT,
+        .bEndpointAddress = USB_ENDPOINT_OUT | 2,
+        .bmAttributes = USB_TRANSFER_TYPE_BULK,
+        .wMaxPacketSize = 0x40,  // Уменьшил размер пакета
+        .bInterval = 0
+    }
+};
+
+// Обновляем VID/PID на более подходящие для отладки
+// Используем VID/PID от Nintendo Pro Controller
+static const UsbDsDeviceInfo device_info = {
+    .idVendor = 0x057E,  // Nintendo
+    .idProduct = 0x2009,  // Pro Controller
+    .bcdDevice = 0x0100,
+    .Manufacturer = u8"Nintendo",
+    .Product = u8"Pro Controller",
+    .SerialNumber = u8"0001"
+};
 
 Result initializeUsb() {
     Result rc = 0;
@@ -136,23 +189,25 @@ Result initializeUsb() {
     usbDsExit();
     
     // Даем системе время очистить предыдущее состояние
-    svcSleepThread(500000000ULL); // 500ms
+    svcSleepThread(1000000000ULL); // 1 секунда
 
     // Проверяем состояние USB
     UsbState state;
     rc = usbDsGetState(&state);
     if (R_SUCCEEDED(rc)) {
-        printer("Current USB state: %d", state);
+        printer("Initial USB state: %s", getUsbStateName(state));
     }
     
     while (retryCount < maxRetries) {
+        printer("\nTry %d/%d:", retryCount + 1, maxRetries);
+        
         // Инициализируем USB
         rc = usbDsInitialize();
         if (R_FAILED(rc)) {
             printer("usbDsInitialize failed: %x", rc);
             retryCount++;
             if (retryCount < maxRetries) {
-                printer("Retrying USB initialization (%d/%d)...", retryCount + 1, maxRetries);
+                printer("Retrying USB initialization...");
                 svcSleepThread(1000000000ULL);
                 continue;
             }
@@ -160,59 +215,130 @@ Result initializeUsb() {
         }
         printer("usbDsInitialize success");
 
-        // Ждем готовности USB с увеличенным таймаутом
-        rc = usbDsWaitReady(5000000000ULL); // 5 seconds
+        // Проверяем состояние сразу после инициализации
+        rc = usbDsGetState(&state);
+        if (R_SUCCEEDED(rc)) {
+            printer("USB state after init: %s", getUsbStateName(state));
+        }
+
+        // Пробуем принудительно активировать USB
+        rc = usbDsEnable();
         if (R_FAILED(rc)) {
-            printer("USB not ready: %x", rc);
+            printer("Failed to enable USB: %x", rc);
+            usbDsExit();
+            continue;
+        }
+        printer("USB enabled successfully");
+
+        // Даем время на применение настроек
+        svcSleepThread(1000000000ULL); // 1 секунда
+
+        // Проверяем состояние после активации
+        rc = usbDsGetState(&state);
+        if (R_SUCCEEDED(rc)) {
+            printer("USB state after enable: %s", getUsbStateName(state));
+        }
+
+        // Ждем состояния Address
+        int waitCount = 0;
+        while (waitCount < 50 && state != UsbState_Address) {
+            svcSleepThread(100000000ULL);
+            rc = usbDsGetState(&state);
+            if (R_SUCCEEDED(rc)) {
+                if (waitCount % 10 == 0) {
+                    printer("Current USB state: %s", getUsbStateName(state));
+                }
+            }
+            waitCount++;
+        }
+
+        if (state != UsbState_Address) {
+            printer("Failed to reach Address state, current: %s", getUsbStateName(state));
             usbDsExit();
             retryCount++;
-            if (retryCount < maxRetries) {
-                printer("Retrying USB initialization (%d/%d)...", retryCount + 1, maxRetries);
-                svcSleepThread(1000000000ULL);
-                continue;
-            }
-            return rc;
+            continue;
         }
-        
-        printer("USB is ready");
-        break;
+
+        printer("Reached Address state, creating interface...");
+
+        // Копируем настройки из конфигурации
+        g_interface_descriptor = config_descriptor.interface;
+        g_endpoint_descriptor_in = config_descriptor.endpoint_in;
+        g_endpoint_descriptor_out = config_descriptor.endpoint_out;
+
+        // Создаем интерфейс
+        // rc = usbDsGetDsInterface(&g_interface, &g_interface_descriptor, "nx-debug");
+        // if (R_FAILED(rc)) {
+        //     printer("Failed to get interface: %x, current state: %s", rc, getUsbStateName(state));
+        //     usbDsExit();
+        //     continue;
+        // }
+        // printer("Interface created");
+
+        // // Активируем интерфейс
+        // rc = usbDsInterface_EnableInterface(g_interface);
+        // if (R_FAILED(rc)) {
+        //     printer("Failed to enable interface: %x", rc);
+        //     usbDsExit();
+        //     continue;
+        // }
+        // printer("Interface enabled");
+
+        // Ждем, пока USB сконфигурируется
+        int configWaitCount = 0;
+        const int maxConfigWaits = 50;
+        bool configured = false;
+
+        while (configWaitCount < maxConfigWaits) {
+            rc = usbDsGetState(&state);
+            if (R_SUCCEEDED(rc)) {
+                if (state == UsbState_Configured) {
+                    configured = true;
+                    printer("USB configured successfully, state: %s", getUsbStateName(state));
+                    break;
+                }
+                if (configWaitCount % 10 == 0) {
+                    printer("Waiting for USB configuration... Current state: %s", getUsbStateName(state));
+                }
+                if (state == UsbState_Address) {
+                    printer("USB in address state");
+                    break;
+                }
+            }
+            svcSleepThread(100000000ULL);
+            configWaitCount++;
+        }
+
+        if (!configured) {
+            printer("USB configuration timeout, last state: %s", getUsbStateName(state));
+            usbDsExit();
+            retryCount++;
+            continue;
+        }
+
+        // Создаем endpoints
+        rc = usbDsInterface_GetDsEndpoint(g_interface, &g_endpoint_in, &g_endpoint_descriptor_in);
+        if (R_FAILED(rc)) {
+            printer("Failed to get input endpoint: %x", rc);
+            usbDsExit();
+            continue;
+        }
+        printer("Input endpoint created");
+
+        rc = usbDsInterface_GetDsEndpoint(g_interface, &g_endpoint_out, &g_endpoint_descriptor_out);
+        if (R_FAILED(rc)) {
+            printer("Failed to get output endpoint: %x", rc);
+            usbDsExit();
+            continue;
+        }
+        printer("Output endpoint created");
+
+        printer("USB initialization complete!");
+        return 0;
     }
 
-    // Дополнительная пауза после успешной инициализации
-    svcSleepThread(1000000000ULL); // 1 second
-
-    // Создаем интерфейс с базовыми параметрами
-    rc = usbDsGetDsInterface(&g_interface, &g_interface_descriptor, "nx-debug");
-    if (R_FAILED(rc)) {
-        printer("Failed to get interface: %x", rc);
-        usbDsExit();
-        return rc;
-    }
-    printer("Interface created");
-
-    // Пауза после создания интерфейса
-    svcSleepThread(1000000000ULL); // 1 second
-
-    // Создаем endpoints
-    rc = usbDsInterface_GetDsEndpoint(g_interface, &g_endpoint_in, &g_endpoint_descriptor_in);
-    if (R_FAILED(rc)) {
-        printer("Failed to get input endpoint: %x", rc);
-        usbDsExit();
-        return rc;
-    }
-    printer("Input endpoint created");
-
-    rc = usbDsInterface_GetDsEndpoint(g_interface, &g_endpoint_out, &g_endpoint_descriptor_out);
-    if (R_FAILED(rc)) {
-        printer("Failed to get output endpoint: %x", rc);
-        usbDsExit();
-        return rc;
-    }
-    printer("Output endpoint created");
-
-    printer("USB initialization complete!");
-
-    return rc;
+    printer("Failed to initialize USB after all retries");
+    return -1;
 }
 
 
@@ -223,9 +349,10 @@ Result tryUsbCommsRead2(void* buffer, size_t size, size_t *transferredSize, u64 
     u32 tmp_transferredSize = 0;
 
     // Проверяем готовность USB с таймаутом
-    rc = usbDsWaitReady(timeout);
-    if (R_FAILED(rc)) {
-        printer("USB not ready: %x\n", rc);
+    UsbState state;
+    rc = usbDsGetState(&state);
+    if (R_FAILED(rc) || state != UsbState_Configured) {
+        printer("USB not ready, state: %d, rc: %x", state, rc);
         return rc;
     }
 
@@ -740,7 +867,7 @@ bool mainLoop() {
             }
                 
             printer("\n  before initialize USB\n");
-            rc = initializeUsb2();
+            rc = initializeUsb();
             if (R_FAILED(rc)) {
                 printer("USB initialization failed: %x\n", rc);
                  pmdmntExit();
@@ -769,10 +896,7 @@ bool mainLoop() {
 
 
 int main(int argc, char* argv[]) {
-    // Инициализация консоли
-
     consoleInit(NULL);
-    log_to_file("Program started");
     mainLoop();
     consoleExit(NULL);
     return 0;
