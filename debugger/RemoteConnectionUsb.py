@@ -92,7 +92,7 @@ class RemoteConnectionUsb(RemoteConnection):
 
         except usb.core.USBError as e:
             print(f"Ошибка при инициализации USB: {str(e)}")
-            raise
+
 
     def write(self, data):
         if self.debug:
@@ -103,7 +103,7 @@ class RemoteConnectionUsb(RemoteConnection):
         size = len(data)
         total_written = 0
         timeout = 5000
-        retry_count = 3
+        retry_count = 10000
         
         while size > 0 and retry_count > 0:
             try:
@@ -143,7 +143,8 @@ class RemoteConnectionUsb(RemoteConnection):
                 continue
             except usb.core.USBError as e:
                 print(f"Ошибка USB при записи: {str(e)}")
-                raise
+                retry_count-=1
+                continue
         
         if retry_count == 0:
             raise Exception(f"Не удалось записать данные после нескольких попыток. Записано {total_written} из {len(data)} байт")
@@ -188,7 +189,7 @@ class RemoteConnectionUsb(RemoteConnection):
                 continue
             except usb.core.USBError as e:
                 print(f"Ошибка USB при чтении: {str(e)}")
-                raise
+                continue
         
         if retry_count == 0:
             raise Exception(f"Не удалось прочитать данные после нескольких попыток. Прочитано {len(data)} из {size} байт")
