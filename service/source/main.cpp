@@ -135,8 +135,8 @@ static const struct {
         .bNumInterfaces = 1,
         .bConfigurationValue = 1,
         .iConfiguration = 0,
-        .bmAttributes = USB_CONFIG_ATT_ONE,  // Убрал SELFPOWER
-        .MaxPower = 250  // Увеличил потребление питания
+        .bmAttributes = USB_CONFIG_ATT_ONE,
+        .MaxPower = 250
     },
     .interface = {
         .bLength = USB_DT_INTERFACE_SIZE,
@@ -144,9 +144,9 @@ static const struct {
         .bInterfaceNumber = 0,
         .bAlternateSetting = 0,
         .bNumEndpoints = 2,
-        .bInterfaceClass = 0xFF,  // Vendor specific
-        .bInterfaceSubClass = 0x00,
-        .bInterfaceProtocol = 0x00,
+        .bInterfaceClass = USB_CLASS_VENDOR_SPEC,
+        .bInterfaceSubClass = 0x93,  // Специальный подкласс для отладки
+        .bInterfaceProtocol = 0x01,  // Протокол версии 1
         .iInterface = 0
     },
     .endpoint_in = {
@@ -154,7 +154,7 @@ static const struct {
         .bDescriptorType = USB_DT_ENDPOINT,
         .bEndpointAddress = USB_ENDPOINT_IN | 1,
         .bmAttributes = USB_TRANSFER_TYPE_BULK,
-        .wMaxPacketSize = 0x40,  // Уменьшил размер пакета
+        .wMaxPacketSize = 0x40,
         .bInterval = 0
     },
     .endpoint_out = {
@@ -162,7 +162,7 @@ static const struct {
         .bDescriptorType = USB_DT_ENDPOINT,
         .bEndpointAddress = USB_ENDPOINT_OUT | 2,
         .bmAttributes = USB_TRANSFER_TYPE_BULK,
-        .wMaxPacketSize = 0x40,  // Уменьшил размер пакета
+        .wMaxPacketSize = 0x40,
         .bInterval = 0
     }
 };
@@ -258,7 +258,7 @@ Result initializeUsb() {
             retryCount++;
             continue;
         }
-
+        retryCount++;
         printer("Reached Address state, creating interface...");
 
         // Копируем настройки из конфигурации
@@ -266,14 +266,15 @@ Result initializeUsb() {
         g_endpoint_descriptor_in = config_descriptor.endpoint_in;
         g_endpoint_descriptor_out = config_descriptor.endpoint_out;
 
-        // Создаем интерфейс
-        // rc = usbDsGetDsInterface(&g_interface, &g_interface_descriptor, "nx-debug");
-        // if (R_FAILED(rc)) {
-        //     printer("Failed to get interface: %x, current state: %s", rc, getUsbStateName(state));
-        //     usbDsExit();
-        //     continue;
-        // }
-        // printer("Interface created");
+        UsbDsInterface* interface = NULL;
+        rc = usbDsGetDsInterface(&interface, &g_interface_descriptor, "nx-debug");
+        if (R_FAILED(rc)) {
+            printer("Failed to get interface: %x, current state: %s", rc, getUsbStateName(state));
+            usbDsExit();
+            continue;
+        }
+        g_interface = interface;  // Сохраняем указатель
+        printer("Interface created");
 
         // // Активируем интерфейс
         // rc = usbDsInterface_EnableInterface(g_interface);
