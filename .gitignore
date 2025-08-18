@@ -13,6 +13,7 @@ mainwindow_gen.py
 *.nro
 *.nso
 *.pfs0
+*.kip
 .idea/
 CMakeFiles/
 service/libnxdbg_service.a

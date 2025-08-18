@@ -1,38 +1,169 @@
+// Copyright 2017 plutoo
 #include <switch.h>
-#include "commands.h"
-#include <memory.h>
-#include "variable.hpp"
+#include <stdlib.h>
+#include <string.h>
+#include <switch/services/pm.h>
+//#include <switch/services/pmdmnt.h>
 
+u32 __nx_applet_type = AppletType_None;
 
+static char g_heap[0x20000];
 
+void __libnx_initheap(void)
+{
+    extern char* fake_heap_start;
+    extern char* fake_heap_end;
+
+    fake_heap_start = &g_heap[0];
+    fake_heap_end   = &g_heap[sizeof g_heap];
+}
+
+typedef enum {
+    REQ_LIST_PROCESSES   =0,
+    REQ_ATTACH_PROCESS   =1,
+    REQ_DETACH_PROCESS   =2,
+    REQ_QUERYMEMORY      =3,
+    REQ_GET_DBGEVENT     =4,
+    REQ_READMEMORY       =5,
+    REQ_CONTINUE_DBGEVENT=6,
+    REQ_GET_THREADCONTEXT=7,
+    REQ_BREAK_PROCESS    =8,
+    REQ_WRITEMEMORY32    =9,
+    REQ_LISTENAPPLAUNCH  =10,
+    REQ_GETAPPPID        =11,
+    REQ_START_PROCESS    =12,
+    REQ_GET_TITLE_PID    =13
+} RequestType;
+
+typedef struct {
+    u32 Type;
+} DebuggerRequest;
+
+typedef struct {
+    u32 Result;
+    u32 LenBytes;
+    void* Data;
+} DebuggerResponse;
+
+typedef struct { // Cmd1
+    u64 Pid;
+} AttachProcessReq;
+
+typedef struct {
+    u32 DbgHandle;
+} AttachProcessResp;
+
+typedef struct { // Cmd2
+    u32 DbgHandle;
+} DetachProcessReq;
+
+typedef struct { // Cmd3
+    u32 DbgHandle;
+    u32 Pad;
+    u64 Addr;
+} QueryMemoryReq;
+
+typedef struct {
+    u64 Addr;
+    u64 Size;
+    u32 Perm;
+    u32 Type;
+} QueryMemoryResp;
+
+typedef struct { // Cmd4
+    u32 DbgHandle;
+} GetDbgEventReq;
+
+typedef struct {
+    u8 Event[0x40];
+} GetDbgEventResp;
+
+typedef struct { // Cmd5
+    u32 DbgHandle;
+    u32 Size;
+    u64 Addr;
+} ReadMemoryReq;
+
+typedef struct { // Cmd6
+    u32 DbgHandle;
+    u32 Flags;
+    u64 ThreadId;
+} ContinueDbgEventReq;
+
+typedef struct { // Cmd7
+    u32 DbgHandle;
+    u32 Flags;
+    u64 ThreadId;
+} GetThreadContextReq;
+
+typedef struct {
+    u8 Out[0x320];
+} GetThreadContextResp;
+
+typedef struct { // Cmd8
+    u32 DbgHandle;
+} BreakProcessReq;
+
+typedef struct { // Cmd9
+    u32 DbgHandle;
+    u32 Value;
+    u64 Addr;
+} WriteMemory32Req;
+
+typedef struct { // Cmd11
+    u64 Pid;
+} GetAppPidResp;
+
+typedef struct { // Cmd12
+    u64 Pid;
+} StartProcessReq;
+
+typedef struct { // Cmd13
+    u64 TitleId;
+} GetTitlePidReq;
+
+typedef struct {
+    u64 Pid;
+} GetTitlePidResp;
+
+bool kernelAbove300(void) {
+    u64 version = 0;
+    if (R_SUCCEEDED(splGetConfig(SplConfigItem_Version, &version))) {
+        // Extract version information from the returned value
+        u32 major = (version >> 16) & 0xFF;
+        return major >= 3;
+    }
+    return false;
+}
+
+void customFatalSimple(u32 code) {
+    fatalThrowWithPolicy(FatalPolicy_ErrorScreen, code);
+}
+
+void sendUsbResponse(DebuggerResponse resp)
+{
+    usbCommsWrite((void*)&resp, 8);
+
+    if (resp.LenBytes > 0) {
+        usbCommsWrite(resp.Data, resp.LenBytes);
+    }
+}
 
 int handleUsbCommand()
 {
-    // u32 cmd;
-    size_t size;
-    printer("inside handleUsbCommand");
-    consoleInit(NULL);
     DebuggerRequest r;
     DebuggerResponse resp;
     Result rc;
-    size_t transferredSize = 0;
 
-   rc = tryUsbCommsRead2(&r, sizeof(r), &transferredSize);
-    if (R_FAILED(rc)) {
-        if (rc == MAKERESULT(Module_Libnx, LibnxError_Timeout)) {
-            return false; // Таймаут - просто выходим
-        }
-        printer("USB read error: %x\n", rc);
-        return false;
+    size_t len = usbCommsRead(&r, sizeof(r));
+
+    if (len != sizeof(r)) {
+        // USB transfer failure.
+        return 1;
     }
 
-    if (transferredSize != sizeof(r)) {
-        printer("Incomplete data: %zu/%zu\n", transferredSize, sizeof(r));
-        return false;
-    }
-    printer("Received request type: %u\n", r.Type);
     resp.LenBytes = 0;
-    resp.Result = 0;
+    resp.Data = NULL;
 
     switch (r.Type) {
     case REQ_LIST_PROCESSES: { // Cmd0
@@ -85,7 +216,7 @@ int handleUsbCommand()
         usbCommsRead(&req_, sizeof(req_));
 
         MemoryInfo info;
-        u32 who_cares;  // Изменили тип на u32
+        u32 who_cares;
         rc = svcQueryDebugProcessMemory(&info, &who_cares, req_.DbgHandle, req_.Addr);
         resp.Result = rc;
 
@@ -124,10 +255,9 @@ int handleUsbCommand()
         ReadMemoryReq req_;
         usbCommsRead(&req_, sizeof(req_));
 
-        if (req_.Size > 0x1000) {
+        if (req_.Size > 0x1000)
             // Too big read.
-            fatalThrow(MAKERESULT(Module_Libnx, 222));  // Используем fatalThrow вместо fatalSimple
-        }
+            customFatalSimple(222 | (5 << 9));
 
         static u8 page[0x1000];
         rc = svcReadDebugProcessMemory(page, req_.DbgHandle, req_.Addr, req_.Size);
@@ -173,13 +303,15 @@ int handleUsbCommand()
 
         ThreadContext ctx;
         rc = svcGetDebugThreadContext(&ctx, req_.DbgHandle, req_.ThreadId, req_.Flags);
+        resp.Result = rc;
+
         if (rc == 0) {
-            memcpy(resp_.Out, &ctx, sizeof(ThreadContext));
+            memcpy(resp_.Out, &ctx, sizeof(ctx));
             resp.LenBytes = sizeof(resp_);
             resp.Data = &resp_;
         }
-        resp.Result = rc;
-                sendUsbResponse(resp);
+
+        sendUsbResponse(resp);
         break;
     }
 
@@ -205,16 +337,21 @@ int handleUsbCommand()
         break;
     }
 
- case REQ_LISTENAPPLAUNCH: { // Cmd10
-        Handle h;
-        Event debug_event;
-        rc = pmdmntHookToCreateApplicationProcess(&debug_event);
-        resp.Result = rc;
-
-        if (rc == 0) {  // Добавили фигурные скобки
-            h = debug_event.revent;
-            svcCloseHandle(h);
+    case REQ_LISTENAPPLAUNCH: { // Cmd10
+        rc = pmdmntInitialize();
+        if (R_SUCCEEDED(rc)) {
+            // Create an event to be signaled when a new application process is created
+            Event event;
+            rc = pmdmntHookToCreateApplicationProcess(&event);
+            
+            if (R_SUCCEEDED(rc)) {
+                // We'll return success and let the client poll for the application PID
+                svcCloseHandle(event.revent);
+            }
+            
+            pmdmntExit();
         }
+        resp.Result = rc;
 
         sendUsbResponse(resp);
         break;
@@ -223,7 +360,11 @@ int handleUsbCommand()
     case REQ_GETAPPPID: { // Cmd11
         GetAppPidResp resp_;
 
-        rc = pmdmntGetApplicationProcessId(&resp_.Pid);  // Changed from pmdmntGetApplicationPid
+        rc = pmdmntInitialize();
+        if (R_SUCCEEDED(rc)) {
+            rc = pmdmntGetApplicationProcessId(&resp_.Pid);
+            pmdmntExit();
+        }
         resp.Result = rc;
 
         if (rc == 0) {
@@ -239,19 +380,27 @@ int handleUsbCommand()
         StartProcessReq req_;
         usbCommsRead(&req_, sizeof(req_));
 
-        rc = pmdmntStartProcess(req_.Pid);
+        rc = pmdmntInitialize();
+        if (R_SUCCEEDED(rc)) {
+            rc = pmdmntStartProcess(req_.Pid);
+            pmdmntExit();
+        }
         resp.Result = rc;
 
         sendUsbResponse(resp);
         break;
     }
 
-     case REQ_GET_TITLE_PID: { // Cmd13
+    case REQ_GET_TITLE_PID: { // Cmd13
         GetTitlePidReq req_;
         GetTitlePidResp resp_;
         usbCommsRead(&req_, sizeof(req_));
 
-        rc = pmdmntGetProcessId(&resp_.Pid, req_.TitleId);  // Changed from pmdmntGetTitlePid
+        rc = pmdmntInitialize();
+        if (R_SUCCEEDED(rc)) {
+            rc = pmdmntGetProcessId(&resp_.Pid, req_.TitleId);
+            pmdmntExit();
+        }
         resp.Result = rc;
 
         if (rc == 0) {
@@ -265,8 +414,29 @@ int handleUsbCommand()
 
     default:
         // Unknown request.
-        fatalThrow(MAKERESULT(Module_Libnx, 222));  // Заменяем fatalSimple на fatalThrow
+        customFatalSimple(222 | (2 << 9));
     }
 
     return 1;
+}
+
+int main(int argc, char *argv[])
+{
+    Result rc;
+
+    rc = pmdmntInitialize();
+    if (rc) {
+        // Failed to get PM debug interface.
+        customFatalSimple(222 | (6 << 9));
+    }
+    pmdmntExit();
+
+    rc = usbCommsInitialize();
+    if (rc) {
+        customFatalSimple(rc);
+    }
+
+    while (handleUsbCommand());
+
+    return 0;
 }
