@@ -140,4 +140,12 @@ mainwindow.ui - Qt дизайн интерфейса
   - [v] moved to qt5 and python3
   - [v] worked test mode
 
-Copyright © 2017 plutoo
+run debugger:
+```
+cd debugger
+source env/bin/activate
+python3 MainWindow.py --nextlaunch
+```
+
+
+

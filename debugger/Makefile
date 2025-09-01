@@ -3,10 +3,9 @@
 all: mainwindow_gen.py
 
 test: all
-	python2 MainWindow.py --test
 
 mainwindow_gen.py: mainwindow.ui
-	pyuic4 $^ > $@
+	pyuic5 -x mainwindow.ui -o mainwindow_gen.py
 
 clean:
 	rm mainwindow_gen.py *.pyc

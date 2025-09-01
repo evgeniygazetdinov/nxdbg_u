@@ -214,6 +214,10 @@ def main(argv):
             return 0
 
     try:
+        usb = RemoteConnectionUsb()
+        pid = usb.cmdListenForAppLaunch()
+        dbg_handle = usb.cmdAttachProcess(pid)
+
         app = QtWidgets.QApplication(argv)
         QtWidgets.QApplication.setStyle(QtWidgets.QStyleFactory.create('Cleanlooks'))
         form = MainDebugger(usb, dbg_handle)
