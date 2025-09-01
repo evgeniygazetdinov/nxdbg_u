@@ -17,3 +17,4 @@ mainwindow_gen.py
 .idea/
 CMakeFiles/
 service/libnxdbg_service.a
+.vscode
